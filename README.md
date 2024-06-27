@@ -4,6 +4,14 @@ ctcdecode is an implementation of CTC (Connectionist Temporal Classification) be
 C++ code borrowed liberally from Paddle Paddles' [DeepSpeech](https://github.com/PaddlePaddle/DeepSpeech).
 It includes swappable scorer support enabling standard beam search, and KenLM-based decoding. If you are new to the concepts of CTC and Beam Search, please visit the Resources section where we link a few tutorials explaining why they are needed. 
 
+## *Adapting for newer Pytorch and C++17
+
+It seems like no one is maintaining the old repo [here](https://github.com/parlance/ctcdecode). I just want to fix some compatibility issue in third-party packages. It was successfully installed with Pytorch 2.1.0. I want share this for anyone who is struggling with the installation. If you met any other compatibility problem, feel free to raise issues!
+
+The modification is very simple, the comilation failed because dynamic exception specifications are not permitted since C++17. I just replace all `throw(xxx)` with `noexept(false)`.
+
+**Note that the function of this repo is not GUARANTEED, I don't have time to test them all, though I think it would work properly:)**
+
 ## Installation
 The library is largely self-contained and requires only PyTorch. 
 Building the C++ library requires gcc or clang. 
@@ -13,7 +21,7 @@ The below installation also works for Google Colab.
 
 ```bash
 # get the code
-git clone --recursive https://github.com/parlance/ctcdecode.git
+git clone --recursive https://github.com/WayenVan/ctcdecode.git
 cd ctcdecode && pip install .
 ```
 
