@@ -207,10 +207,10 @@ class ProbingVocabulary : public base::Vocabulary {
     detail::ProbingVocabularyHeader *header_;
 };
 
-void MissingUnknown(const Config &config) throw(SpecialWordMissingException);
-void MissingSentenceMarker(const Config &config, const char *str) throw(SpecialWordMissingException);
+void MissingUnknown(const Config &config) noexcept(false);
+void MissingSentenceMarker(const Config &config, const char *str) noexcept(false);
 
-template <class Vocab> void CheckSpecials(const Config &config, const Vocab &vocab) throw(SpecialWordMissingException) {
+template <class Vocab> void CheckSpecials(const Config &config, const Vocab &vocab) noexcept(false) {
   if (!vocab.SawUnk()) MissingUnknown(config);
   if (vocab.BeginSentence() == vocab.NotFound()) MissingSentenceMarker(config, "<s>");
   if (vocab.EndSentence() == vocab.NotFound()) MissingSentenceMarker(config, "</s>");
