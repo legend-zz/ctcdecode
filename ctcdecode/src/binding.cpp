@@ -100,6 +100,79 @@ int beam_decode(at::Tensor th_probs,
     return 1;
 }
 
+int beam_decode_sparse(at::Tensor th_probs_sparse,
+                at::Tensor th_indices,
+                size_t batch_size,
+                size_t max_time,
+                at::Tensor th_seq_lens,
+                std::vector<std::string> new_vocab,
+                int vocab_size,
+                size_t beam_size,
+                size_t num_processes,
+                double cutoff_prob,
+                size_t cutoff_top_n,
+                size_t blank_id,
+                bool log_input,
+                void *scorer,
+                at::Tensor th_output,
+                at::Tensor th_timesteps,
+                at::Tensor th_scores,
+                at::Tensor th_out_length)
+{
+    Scorer *ext_scorer = NULL;
+    if (scorer != NULL) {
+        ext_scorer = static_cast<Scorer *>(scorer);
+    }
+    std::vector<std::vector<std::vector<double>>> probs;
+    std::vector<std::vector<std::vector<int>>> indices;
+    auto prob_accessor = th_probs_sparse.accessor<float, 1>();
+    auto indices_accessor = th_indices.accessor<int, 2>();
+    auto seq_len_accessor = th_seq_lens.accessor<int, 1>();
+
+    int cur_orig_idx = 0;
+    for (int b=0; b < batch_size; ++b) {
+        // avoid a crash by ensuring that an erroneous seq_len doesn't have us try to access memory we shouldn't
+        int seq_len = std::min((int)seq_len_accessor[b], (int)max_time);
+        std::vector<std::vector<double>> temp_prob (seq_len, std::vector<double>(0));
+        std::vector<std::vector<int>> temp_indices (seq_len, std::vector<int>(0));
+        for (int t=0; t < seq_len; ++t) {
+            while (indices_accessor[cur_orig_idx][0] == b && indices_accessor[cur_orig_idx][1] == t) {
+                temp_prob[t].push_back(prob_accessor[cur_orig_idx]);
+                temp_indices[t].push_back(indices_accessor[cur_orig_idx][2]);
+                cur_orig_idx++;
+            }
+        }
+        probs.push_back(temp_prob);
+        indices.push_back(temp_indices);
+    }
+
+
+    std::vector<std::vector<std::pair<double, Output>>> batch_results =
+    ctc_beam_search_decoder_sparse_batch(probs, indices, new_vocab, beam_size, num_processes, cutoff_prob, cutoff_top_n, blank_id, log_input, ext_scorer);
+    auto outputs_accessor = th_output.accessor<int, 3>();
+    auto timesteps_accessor =  th_timesteps.accessor<int, 3>();
+    auto scores_accessor =  th_scores.accessor<float, 2>();
+    auto out_length_accessor =  th_out_length.accessor<int, 2>();
+
+
+    for (int b = 0; b < batch_results.size(); ++b){
+        std::vector<std::pair<double, Output>> results = batch_results[b];
+        for (int p = 0; p < results.size();++p){
+            std::pair<double, Output> n_path_result = results[p];
+            Output output = n_path_result.second;
+            std::vector<int> output_tokens = output.tokens;
+            std::vector<int> output_timesteps = output.timesteps;
+            for (int t = 0; t < output_tokens.size(); ++t){
+                outputs_accessor[b][p][t] =  output_tokens[t]; // fill output tokens
+                timesteps_accessor[b][p][t] = output_timesteps[t];
+            }
+            scores_accessor[b][p] = n_path_result.first;
+            out_length_accessor[b][p] = output_tokens.size();
+        }
+    }
+    return 1;
+}
+
 int paddle_beam_decode(at::Tensor th_probs,
                        at::Tensor th_seq_lens,
                        std::vector<std::string> labels,
@@ -117,6 +190,28 @@ int paddle_beam_decode(at::Tensor th_probs,
 
     return beam_decode(th_probs, th_seq_lens, labels, vocab_size, beam_size, num_processes,
                 cutoff_prob, cutoff_top_n, blank_id, log_input, NULL, th_output, th_timesteps, th_scores, th_out_length);
+}
+
+int paddle_beam_decode_sparse(at::Tensor th_probs_sparse,
+                              at::Tensor th_indices,
+                              size_t batch_size,
+                              size_t max_seq_len,
+                              at::Tensor th_seq_lens,
+                              std::vector<std::string> labels,
+                              int vocab_size,
+                              size_t beam_size,
+                              size_t num_processes,
+                              double cutoff_prob,
+                              size_t cutoff_top_n,
+                              size_t blank_id,
+                              int log_input,
+                              at::Tensor th_output,
+                              at::Tensor th_timesteps,
+                              at::Tensor th_scores,
+                              at::Tensor th_out_length){
+
+    return beam_decode_sparse(th_probs_sparse, th_indices, batch_size, max_seq_len, th_seq_lens, labels, vocab_size, beam_size, num_processes,
+cutoff_prob, cutoff_top_n, blank_id, log_input, NULL, th_output, th_timesteps, th_scores, th_out_length);
 }
 
 int paddle_beam_decode_lm(at::Tensor th_probs,
@@ -289,6 +384,7 @@ void reset_params(void *scorer, double alpha, double beta){
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("paddle_beam_decode", &paddle_beam_decode, "paddle_beam_decode");
+  m.def("paddle_beam_decode_sparse", &paddle_beam_decode_sparse, "paddle_beam_decode_sparse");
   m.def("paddle_beam_decode_lm", &paddle_beam_decode_lm, "paddle_beam_decode_lm");
   m.def("paddle_get_scorer", &paddle_get_scorer, "paddle_get_scorer");
   m.def("paddle_release_scorer", &paddle_release_scorer, "paddle_release_scorer");

@@ -14,11 +14,61 @@ std::vector<std::pair<size_t, float>> get_pruned_log_probs(
     int log_input) {
   std::vector<std::pair<int, double>> prob_idx;
   double log_cutoff_prob = log(cutoff_prob);
+  // double prob_thresh = 1e-6;
+  // if (log_input) {
+  //   prob_thresh = log(prob_thresh);
+  // }
+  // auto start = std::chrono::high_resolution_clock::now();
   for (size_t i = 0; i < prob_step.size(); ++i) {
+    // if (prob_step[i] < prob_thresh) continue;
     prob_idx.push_back(std::pair<int, double>(i, prob_step[i]));
   }
+  // auto end = std::chrono::high_resolution_clock::now();
+  // std::chrono::duration<double> duration = end - start;
+  // std::cout << "prob_idx.push_back took " << duration.count() << " seconds" << std::endl;
   // pruning of vacobulary
-  size_t cutoff_len = prob_step.size();
+  size_t cutoff_len = prob_idx.size();
+  if (log_cutoff_prob < 0.0 || cutoff_top_n < cutoff_len) {
+    // start = std::chrono::high_resolution_clock::now();
+    std::sort(
+        prob_idx.begin(), prob_idx.end(), pair_comp_second_rev<int, double>);
+    // end = std::chrono::high_resolution_clock::now();
+    // duration = end - start;
+    // std::cout << "std::sort took " << duration.count() << " seconds" << std::endl;
+    if (log_cutoff_prob < 0.0) {
+      double cum_prob = 0.0;
+      cutoff_len = 0;
+      for (size_t i = 0; i < prob_idx.size(); ++i) {
+        cum_prob = log_sum_exp(cum_prob, log_input ? prob_idx[i].second : log(prob_idx[i].second) );
+        cutoff_len += 1;
+        if (cum_prob >= cutoff_prob || cutoff_len >= cutoff_top_n) break;
+      }
+    }else{
+      cutoff_len = cutoff_top_n;
+    }
+    prob_idx = std::vector<std::pair<int, double>>(
+        prob_idx.begin(), prob_idx.begin() + cutoff_len);
+  }
+  std::vector<std::pair<size_t, float>> log_prob_idx;
+  for (size_t i = 0; i < cutoff_len; ++i) {
+    log_prob_idx.push_back(std::pair<int, float>(
+        prob_idx[i].first, log_input ? prob_idx[i].second : log(prob_idx[i].second + NUM_FLT_MIN)));
+  }
+  return log_prob_idx;
+}
+
+std::vector<std::pair<size_t, float>> get_pruned_log_probs_sparse(
+    const std::vector<double> &prob_step,
+    const std::vector<int> &indices,
+    double cutoff_prob,
+    size_t cutoff_top_n,
+    int log_input) {
+  std::vector<std::pair<int, double>> prob_idx;
+  double log_cutoff_prob = log(cutoff_prob);
+  for (size_t i = 0; i < prob_step.size(); ++i) {
+    prob_idx.push_back(std::pair<int, double>(indices[i], prob_step[i]));
+  }
+  size_t cutoff_len = prob_idx.size();
   if (log_cutoff_prob < 0.0 || cutoff_top_n < cutoff_len) {
     std::sort(
         prob_idx.begin(), prob_idx.end(), pair_comp_second_rev<int, double>);

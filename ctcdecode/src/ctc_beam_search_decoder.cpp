@@ -161,6 +161,102 @@ DecoderState::next(const std::vector<std::vector<double>> &probs_seq)
   }  // end of loop over time
 }
 
+void
+DecoderState::next_sparse(const std::vector<std::vector<double>> &probs_seq,
+                          const std::vector<std::vector<int>> &indices_seq)
+{
+  // dimension check
+  size_t num_time_steps = probs_seq.size();
+
+  // prefix search over time
+  for (size_t time_step = 0; time_step < num_time_steps; ++time_step, ++abs_time_step) {
+    auto &prob = probs_seq[time_step];
+    auto &indice = indices_seq[time_step];
+
+    float min_cutoff = -NUM_FLT_INF;
+    bool full_beam = false;
+    // assert ext_scorer is nullptr
+
+    std::vector<std::pair<size_t, float>> log_prob_idx =
+        get_pruned_log_probs_sparse(prob, indice, cutoff_prob, cutoff_top_n, log_input);
+    // loop over chars
+    for (size_t index = 0; index < log_prob_idx.size(); index++) {
+      auto c = log_prob_idx[index].first;
+      auto log_prob_c = log_prob_idx[index].second;
+
+      for (size_t i = 0; i < prefixes.size() && i < beam_size; ++i) {
+        auto prefix = prefixes[i];
+        if (full_beam && log_prob_c + prefix->score < min_cutoff) {
+          break;
+        }
+        // blank
+        if (c == blank_id) {
+          prefix->log_prob_b_cur =
+              log_sum_exp(prefix->log_prob_b_cur, log_prob_c + prefix->score);
+          continue;
+        }
+        // repeated character
+        if (c == prefix->character) {
+          prefix->log_prob_nb_cur = log_sum_exp(
+              prefix->log_prob_nb_cur, log_prob_c + prefix->log_prob_nb_prev);
+        }
+        // get new prefix
+        auto prefix_new = prefix->get_path_trie(c, abs_time_step, log_prob_c);
+
+        if (prefix_new != nullptr) {
+          float log_p = -NUM_FLT_INF;
+
+          if (c == prefix->character &&
+              prefix->log_prob_b_prev > -NUM_FLT_INF) {
+            log_p = log_prob_c + prefix->log_prob_b_prev;
+          } else if (c != prefix->character) {
+            log_p = log_prob_c + prefix->score;
+          }
+
+          // language model scoring
+          if (ext_scorer != nullptr &&
+              (c == space_id || ext_scorer->is_character_based())) {
+            PathTrie *prefix_to_score = nullptr;
+            // skip scoring the space
+            if (ext_scorer->is_character_based()) {
+              prefix_to_score = prefix_new;
+            } else {
+              prefix_to_score = prefix;
+            }
+
+            float score = 0.0;
+            std::vector<std::string> ngram;
+            ngram = ext_scorer->make_ngram(prefix_to_score);
+            score = ext_scorer->get_log_cond_prob(ngram) * ext_scorer->alpha;
+            log_p += score;
+            log_p += ext_scorer->beta;
+          }
+          prefix_new->log_prob_nb_cur =
+              log_sum_exp(prefix_new->log_prob_nb_cur, log_p);
+        }
+      }  // end of loop over prefix
+    }    // end of loop over vocabulary
+
+
+    prefixes.clear();
+    // update log probs
+    root.iterate_to_vec(prefixes);
+
+    // only preserve top beam_size prefixes
+    if (prefixes.size() >= beam_size) {
+      std::nth_element(prefixes.begin(),
+                       prefixes.begin() + beam_size,
+                       prefixes.end(),
+                       prefix_compare);
+      for (size_t i = beam_size; i < prefixes.size(); ++i) {
+        prefixes[i]->remove();
+      }
+
+      prefixes.resize(beam_size);
+    }
+  }  // end of loop over time
+}
+
 std::vector<std::pair<double, Output>>
 DecoderState::decode()
 {
@@ -226,6 +322,23 @@ std::vector<std::pair<double, Output>> ctc_beam_search_decoder(
   return state.decode();
 }
 
+std::vector<std::pair<double, Output>> ctc_beam_search_decoder_sparse(
+  const std::vector<std::vector<double>> &probs_seq,
+  const std::vector<std::vector<int>> &indices_seq,
+  const std::vector<std::string> &vocabulary,
+  size_t beam_size,
+  double cutoff_prob,
+  size_t cutoff_top_n,
+  size_t blank_id,
+  int log_input,
+  Scorer *ext_scorer)
+{
+DecoderState state(vocabulary, beam_size, cutoff_prob, cutoff_top_n, blank_id,
+                   log_input, ext_scorer);
+state.next_sparse(probs_seq, indices_seq);
+return state.decode();
+}
+
 
 std::vector<std::pair<double, Output>>  ctc_beam_search_decoder_with_given_state(
     const std::vector<std::vector<double>> &probs_seq,
@@ -276,6 +389,48 @@ ctc_beam_search_decoder_batch(
 
 
 
+  // get decoding results
+  std::vector<std::vector<std::pair<double, Output>>> batch_results;
+  for (size_t i = 0; i < batch_size; ++i) {
+    batch_results.emplace_back(res[i].get());
+  }
+  return batch_results;
+}
+
+
+std::vector<std::vector<std::pair<double, Output>>>
+ctc_beam_search_decoder_sparse_batch(
+    const std::vector<std::vector<std::vector<double>>> &probs_split,
+    const std::vector<std::vector<std::vector<int>>> &indices_split,
+    const std::vector<std::string> &vocabulary,
+    size_t beam_size,
+    size_t num_processes,
+    double cutoff_prob,
+    size_t cutoff_top_n,
+    size_t blank_id,
+    int log_input,
+    Scorer *ext_scorer)
+{
+  VALID_CHECK_GT(num_processes, 0, "num_processes must be nonnegative!");
+  // thread pool
+  ThreadPool pool(num_processes);
+  // number of samples
+  size_t batch_size = probs_split.size();
+
+  // enqueue the tasks of decoding
+  std::vector<std::future<std::vector<std::pair<double, Output>>>> res;
+  for (size_t i = 0; i < batch_size; ++i) {
+    res.emplace_back(pool.enqueue(ctc_beam_search_decoder_sparse,
+                                  std::cref(probs_split[i]),
+                                  std::cref(indices_split[i]),
+                                  std::cref(vocabulary),
+                                  beam_size,
+                                  cutoff_prob,
+                                  cutoff_top_n,
+                                  blank_id,
+                                  log_input,
+                                  ext_scorer));
+  }
   // get decoding results
   std::vector<std::vector<std::pair<double, Output>>> batch_results;
   for (size_t i = 0; i < batch_size; ++i) {

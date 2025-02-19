@@ -122,6 +122,42 @@ class CTCBeamDecoder(object):
 
         return output, scores, timesteps, out_seq_len
 
+    def decode_sparse(self, probs_sparse, indices, batch_size, max_seq_len, seq_lens=None):
+        probs_sparse = probs_sparse.cpu().float()
+        indices = indices.cpu().int()
+        if seq_lens is None:
+            seq_lens = torch.IntTensor(batch_size).fill_(max_seq_len)
+        else:
+            seq_lens = seq_lens.cpu().int()
+        output = torch.IntTensor(batch_size, self._beam_width, max_seq_len).cpu().int()
+        timesteps = torch.IntTensor(batch_size, self._beam_width, max_seq_len).cpu().int()
+        scores = torch.FloatTensor(batch_size, self._beam_width).cpu().float()
+        out_seq_len = torch.zeros(batch_size, self._beam_width).cpu().int()
+        if self._scorer:
+            raise NotImplementedError("Sparse decoding with LM is not implemented yet")
+        else:
+            ctc_decode.paddle_beam_decode_sparse(
+                probs_sparse,
+                indices,
+                batch_size,
+                max_seq_len,
+                seq_lens,
+                self._labels,
+                self._num_labels,
+                self._beam_width,
+                self._num_processes,
+                self._cutoff_prob,
+                self.cutoff_top_n,
+                self._blank_id,
+                self._log_probs,
+                output,
+                timesteps,
+                scores,
+                out_seq_len,
+            )
+
+        return output, scores, timesteps, out_seq_len
+
     def character_based(self):
         return ctc_decode.is_character_based(self._scorer) if self._scorer else None
 

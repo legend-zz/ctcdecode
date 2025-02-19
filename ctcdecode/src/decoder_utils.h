@@ -60,6 +60,13 @@ std::vector<std::pair<size_t, float>> get_pruned_log_probs(
     size_t cutoff_top_n,
     int log_input);
 
+std::vector<std::pair<size_t, float>> get_pruned_log_probs_sparse(
+    const std::vector<double> &prob_step,
+    const std::vector<int> &indices,
+    double cutoff_prob,
+    size_t cutoff_top_n,
+    int log_input);
+
 // Get beam search result from prefixes in trie tree
 std::vector<std::pair<double, Output>> get_beam_search_result(
     const std::vector<PathTrie *> &prefixes,

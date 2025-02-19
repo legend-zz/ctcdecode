@@ -35,7 +35,16 @@ std::vector<std::pair<double, Output>> ctc_beam_search_decoder(
     int log_input = 0,
     Scorer *ext_scorer = nullptr);
 
-
+std::vector<std::pair<double, Output>> ctc_beam_search_decoder_sparse(
+    const std::vector<std::vector<double>> &probs_seq,
+    const std::vector<std::vector<int>> &indices_seq,
+    const std::vector<std::string> &vocabulary,
+    size_t beam_size,
+    double cutoff_prob = 1.0,
+    size_t cutoff_top_n = 40,
+    size_t blank_id = 0,
+    int log_input = 0,
+    Scorer *ext_scorer = nullptr);
 
 /* CTC Beam Search Decoder for batch data
 
@@ -67,6 +76,18 @@ ctc_beam_search_decoder_batch(
     Scorer *ext_scorer = nullptr);
 
 
+std::vector<std::vector<std::pair<double, Output>>>
+ctc_beam_search_decoder_sparse_batch(
+    const std::vector<std::vector<std::vector<double>>> &probs_split,
+    const std::vector<std::vector<std::vector<int>>> &indices_split,
+    const std::vector<std::string> &vocabulary,
+    size_t beam_size,
+    size_t num_processes,
+    double cutoff_prob = 1.0,
+    size_t cutoff_top_n = 40,
+    size_t blank_id = 0,
+    int log_input = 0,
+    Scorer *ext_scorer = nullptr);
   
 
 
@@ -113,6 +134,9 @@ public:
    *               over alphabet of one time step.
   */
   void next(const std::vector<std::vector<double>> &probs_seq);
+
+  void next_sparse(const std::vector<std::vector<double>> &probs_seq, 
+                   const std::vector<std::vector<int>> &indices_seq);
 
   /* Get current transcription from the decoder stream state
    *
